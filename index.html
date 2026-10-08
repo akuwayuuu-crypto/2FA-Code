@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>2FA Bulk</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--navy:#0b1f4b;--bg:#fff;--soft:#f3f5fa;--mut:#7a869f;--bd:#e4e8f1;--warn:#c0392b}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--navy);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-tap-highlight-color:transparent}
+.wrap{max-width:480px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:18px;font-weight:700;letter-spacing:.02em;margin:4px 0 18px}
+button,input{font:inherit}
+.btn{border:1px solid var(--navy);border-radius:10px;padding:12px 16px;font-weight:600;background:var(--navy);color:#fff;width:100%;cursor:pointer}
+.btn.ghost{background:#fff;color:var(--navy)}
+.form{background:var(--soft);border-radius:12px;padding:14px;margin-top:12px;display:none}
+.form.show{display:block}
+label{display:block;font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--mut);margin:0 0 6px}
+input{width:100%;padding:12px;border-radius:8px;border:1px solid var(--bd);background:#fff;color:var(--navy);margin-bottom:12px;font-size:16px;outline:none}
+input:focus{border-color:var(--navy)}
+.row{display:flex;gap:8px}
+.err{color:var(--warn);font-size:13px;margin:-4px 0 10px}
+#list{margin-top:18px;display:flex;flex-direction:column;gap:10px}
+.sesi{border:1px solid var(--bd);border-radius:12px;padding:14px}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.tag{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--mut)}
+.nm{font-weight:600;overflow-wrap:anywhere;margin-top:2px}
+.del{background:none;border:0;color:var(--mut);font-size:16px;padding:2px 6px;cursor:pointer}
+.code{font-size:34px;font-weight:700;letter-spacing:.14em;font-variant-numeric:tabular-nums;margin:12px 0 10px;cursor:pointer;user-select:all}
+.bar{height:3px;background:var(--bd);border-radius:2px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--navy);width:100%;transition:width 1s linear}
+.bar i.low{background:var(--warn)}
+.sub{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin-top:8px}
+.empty{text-align:center;color:var(--mut);padding:36px 0;font-size:14px}
+.note{font-size:11px;color:var(--mut);text-align:center;margin-top:22px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>2FA BULK</h1>
+  <button class="btn" id="open">+ Tambah</button>
+  <div class="form" id="form">
+    <label for="nama">NAMA SESI</label>
+    <input id="nama" autocomplete="off" placeholder="contoh: Akun Utama">
+    <label for="key">KEY2FA</label>
+    <input id="key" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="JBSWY3DPEHPK3PXP">
+    <div class="err" id="err"></div>
+    <div class="row">
+      <button class="btn ghost" id="batal">Batal</button>
+      <button class="btn" id="tambah">Tambah</button>
+    </div>
+  </div>
+  <div id="list"></div>
+  <div class="note">Ketuk kode untuk menyalin. Data tersimpan di browser HP ini saja.</div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+let sesi=[];
+try{sesi=JSON.parse(localStorage.getItem('sesi2fa')||'[]')}catch(e){sesi=[]}
+const save=()=>{try{localStorage.setItem('sesi2fa',JSON.stringify(sesi))}catch(e){}};
+
+function b32(s){
+  const A='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  s=s.replace(/[\s=-]/g,'').toUpperCase();
+  let bits='';
+  for(const c of s){const v=A.indexOf(c);if(v<0)return null;bits+=v.toString(2).padStart(5,'0')}
+  const out=[];
+  for(let i=0;i+8<=bits.length;i+=8)out.push(parseInt(bits.slice(i,i+8),2));
+  return out.length?new Uint8Array(out):null;
+}
+async function totp(key){
+  const raw=b32(key);if(!raw)return null;
+  const ctr=Math.floor(Date.now()/30000);
+  const buf=new ArrayBuffer(8),dv=new DataView(buf);
+  dv.setUint32(0,Math.floor(ctr/4294967296));dv.setUint32(4,ctr>>>0);
+  const k=await crypto.subtle.importKey('raw',raw,{name:'HMAC',hash:'SHA-1'},false,['sign']);
+  const h=new Uint8Array(await crypto.subtle.sign('HMAC',k,buf));
+  const o=h[19]&15;
+  const n=((h[o]&127)<<24|h[o+1]<<16|h[o+2]<<8|h[o+3])%1000000;
+  return String(n).padStart(6,'0');
+}
+const fmt=c=>c.slice(0,3)+' '+c.slice(3);
+const esc=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function render(){
+  const l=$('list');
+  if(!sesi.length){l.innerHTML='<div class="empty">Belum ada sesi. Tekan “+ Tambah”.</div>';return}
+  l.innerHTML=sesi.map((s,i)=>`<div class="sesi" data-i="${i}">
+    <div class="top"><div><div class="tag">SESI ${i+1}</div><div class="nm">${esc(s.nama)}</div></div>
+    <button class="del" data-del="${i}" aria-label="Hapus">✕</button></div>
+    <div class="code" data-code="${i}">--- ---</div>
+    <div class="bar"><i data-bar="${i}"></i></div>
+    <div class="sub"><span data-msg="${i}">Ketuk kode untuk menyalin</span><span data-sec="${i}"></span></div></div>`).join('');
+  tick();
+}
+async function tick(){
+  const sisa=30-Math.floor(Date.now()/1000)%30;
+  for(let i=0;i<sesi.length;i++){
+    const c=await totp(sesi[i].key);
+    const el=document.querySelector(`[data-code="${i}"]`);
+    if(!el)continue;
+    el.textContent=c?fmt(c):'KEY TIDAK VALID';
+    el.dataset.raw=c||'';
+    const b=document.querySelector(`[data-bar="${i}"]`);
+    b.style.width=(sisa/30*100)+'%';b.classList.toggle('low',sisa<=5);
+    document.querySelector(`[data-sec="${i}"]`).textContent=sisa+'d';
+  }
+}
+setInterval(tick,1000);
+
+$('open').onclick=()=>{$('form').classList.add('show');$('nama').focus()};
+$('batal').onclick=()=>{$('form').classList.remove('show');$('err').textContent=''};
+$('tambah').onclick=()=>{
+  const nama=$('nama').value.trim(),key=$('key').value.trim();
+  if(!nama){$('err').textContent='Nama sesi wajib diisi.';return}
+  if(!b32(key)){$('err').textContent='KEY2FA tidak valid (harus Base32: A–Z, 2–7).';return}
+  sesi.push({nama,key});save();
+  $('nama').value='';$('key').value='';$('err').textContent='';
+  $('form').classList.remove('show');
+  render();
+  setTimeout(()=>window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}),50);
+};
+$('list').onclick=async e=>{
+  const d=e.target.closest('[data-del]');
+  if(d){const i=+d.dataset.del;if(confirm('Hapus sesi '+(i+1)+' ('+sesi[i].nama+')?')){sesi.splice(i,1);save();render()}return}
+  const c=e.target.closest('[data-code]');
+  if(c&&c.dataset.raw){
+    const m=document.querySelector(`[data-msg="${c.dataset.code}"]`);
+    try{await navigator.clipboard.writeText(c.dataset.raw);m.textContent='✓ Tersalin'}catch(x){m.textContent='Gagal menyalin, tahan & salin manual'}
+    setTimeout(()=>m.textContent='Ketuk kode untuk menyalin',1500);
+  }
+};
+render();
+</script>
+</body>
+</html>
